@@ -6,6 +6,7 @@ import json
 import os
 from supabase import create_client, Client
 
+message_last_sent = None
 webhook_url = os.environ['WEBHOOK_URL']
 colors = {
     "happy": "#ecba3d",
@@ -85,6 +86,11 @@ def send_to_discord(body, top_color):
         "Content-Type": "application/json"
     }
     
+    if message_last_sent and datetime.now() - message_last_sent < timedelta(hours=23, minutes=59, seconds=59):
+        print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Message already sent within the last 24 hours, skipping.")
+        return
+    
+    message_last_sent = datetime.now()
     response = requests.post(webhook_url, headers=headers, data=json.dumps(data))
     
     if response.status_code == 204:
