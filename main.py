@@ -5,8 +5,9 @@ import requests
 import json
 import os
 from supabase import create_client, Client
+from pathlib import Path
+from typing import Optional
 
-message_last_sent = None
 webhook_url = os.environ['WEBHOOK_URL']
 colors = {
     "happy": "#ecba3d",
@@ -28,11 +29,13 @@ colors = {
 
 SUPABASE_URL = "https://qzeihdpxiklgqyflggjv.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6ZWloZHB4aWtsZ3F5ZmxnZ2p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM4Nzk1NTAsImV4cCI6MjA1OTQ1NTU1MH0.jtiUrPywII-ucmMtWuP8INhfkCs1wS8DVmOnODY7Xmg"
+LAST_SENT_FILE = Path(os.environ.get('LAST_SENT_FILE', './last_sent.txt'))
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def job():
     print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Grabbing data")
+    message_last_sent = get_last_sent()
     entries = get_yesterday_entries()
     counts = count_each_emotion(entries)
     sorted_counts = {k: v for k, v in sorted(counts.items(), key = lambda item: item[1], reverse=True)}
@@ -40,7 +43,7 @@ def job():
     frequent_color_hex = colors.get(frequent_color, "#ffffff")
     body = format_content(sorted_counts)
     print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Sending data to Discord")
-    send_to_discord(body, frequent_color_hex[1:])
+    send_to_discord(body, frequent_color_hex[1:], message_last_sent)
 
 def get_yesterday_entries():
     yesterday = datetime.now() - timedelta(days=1)
@@ -76,7 +79,32 @@ def format_content(entries):
 
     return content
 
-def send_to_discord(body, top_color):
+def update_last_sent() -> None:            
+    message_last_sent = datetime.now()
+    try:
+        with open(LAST_SENT_FILE, "w") as f:
+            f.write(message_last_sent.strftime("%Y-%m-%d %H:%M:%S"))
+        print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Last sent time updated to {message_last_sent}")
+    except IOError as e:
+        print(f"Error update last sent time: {e}")
+        return None
+
+def get_last_sent() -> Optional[datetime]:
+    if not LAST_SENT_FILE.exists():
+        return None
+    try:
+        with open(LAST_SENT_FILE, "r") as f:
+            last_sent = f.read().strip()
+            if last_sent:
+                return datetime.strptime(last_sent, "%Y-%m-%d %H:%M:%S")
+            else:
+                return None
+    except IOError as e:
+        print(f"Error reading last sent time: {e}")
+        return None
+    
+
+def send_to_discord(body, top_color, message_last_sent):
     data = {
         "content": "**This is howWEfelt yesterday**\n" + body + "Be sure to submit howYOUfeel today! [howWEfeel](https://mehrezat.com/howWEfeel/home.html)",
         "username": "howWEfeel",
@@ -86,22 +114,23 @@ def send_to_discord(body, top_color):
         "Content-Type": "application/json"
     }
     
-    if message_last_sent and datetime.now() - message_last_sent < timedelta(hours=23, minutes=59, seconds=59):
+    if message_last_sent and datetime.now() - message_last_sent < timedelta(hours=18):
         print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Message already sent within the last 24 hours, skipping.")
         return
     
-    message_last_sent = datetime.now()
     response = requests.post(webhook_url, headers=headers, data=json.dumps(data))
     
     if response.status_code == 204:
         print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Message sent successfully")
+        update_last_sent()
     else:
         print(f"{datetime.today().strftime('%Y-%m-%d %H:%M:%S')}: Failed to send message: {response.status_code} - {response.text}")
 
-job()
-schedule.every().saturday.at("08:00").do(job)
-schedule.every().sunday.at("08:00").do(job)
+if __name__ == "__main__":    
+    job()
+    schedule.every().saturday.at("08:00").do(job)
+    schedule.every().sunday.at("08:00").do(job)
 
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
